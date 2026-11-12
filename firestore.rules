@@ -1,0 +1,68 @@
+rules_version = '2';
+// Reglas de la app. El perfil (users/{uid}) ya se usa; el resto de colecciones queda listo para la siguiente etapa.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() { return request.auth != null; }
+    function isOwner(uid) { return signedIn() && request.auth.uid == uid; }
+
+    // Catálogo: lectura pública, carga solo desde la consola de Firebase.
+    match /movies/{id}     { allow read: if true; allow write: if false; }
+    match /screenings/{id} { allow read: if true; allow write: if false; }
+    match /polls/{id}      { allow read: if true; allow write: if false; }
+
+    // Perfil: solo su dueño.
+    match /users/{uid} { allow read, write: if isOwner(uid); }
+
+    // Reservas: cada usuario ve y cancela solo las suyas (1 a 6 entradas).
+    match /reservations/{id} {
+      allow read: if signedIn() && resource.data.uid == request.auth.uid;
+      allow create: if signedIn()
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.qty is int
+        && request.resource.data.qty >= 1 && request.resource.data.qty <= 6
+        && request.resource.data.status == 'confirmed';
+      allow update: if signedIn()
+        && resource.data.uid == request.auth.uid
+        && request.resource.data.uid == resource.data.uid
+        && request.resource.data.status == 'cancelled';
+      allow delete: if false;
+    }
+
+    // Calificaciones: una por usuario y película (id = uid_movieId).
+    match /ratings/{id} {
+      allow read: if true;
+      allow create, update: if signedIn()
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.stars is int
+        && request.resource.data.stars >= 1 && request.resource.data.stars <= 5;
+      allow delete: if signedIn() && resource.data.uid == request.auth.uid;
+    }
+
+    // Comentarios y recomendaciones.
+    match /comments/{id} {
+      allow read: if true;
+      allow create: if signedIn()
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.text is string
+        && request.resource.data.text.size() >= 10
+        && request.resource.data.text.size() <= 140;
+      allow delete: if signedIn() && resource.data.uid == request.auth.uid;
+    }
+
+    // Mensajes de contacto: cualquiera con sesión puede enviar; solo se leen desde la consola.
+    match /messages/{id} {
+      allow read, update, delete: if false;
+      allow create: if signedIn()
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.text is string
+        && request.resource.data.text.size() >= 10
+        && request.resource.data.text.size() <= 500;
+    }
+
+    // Votación comunitaria: un voto por socio (id del voto = uid).
+    match /polls/{pollId}/votes/{uid} {
+      allow read: if true;
+      allow write: if isOwner(uid) && request.resource.data.option is string;
+    }
+  }
+}
